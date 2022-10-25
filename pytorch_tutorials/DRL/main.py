@@ -64,14 +64,16 @@ class DQN(nn.Module):
             return (size - (kernel_size - 1) - 1) // stride + 1
         convw = conv2d_size_out(conv2d_size_out(conv2d_size_out(w)))
         convh = conv2d_size_out(conv2d_size_out(conv2d_size_out(h)))
-        linear_input_size = convw * convh * 32
+        linear_input_size = int(convw * convh * 32)
         self.head = nn.Linear(linear_input_size, outputs)
 
     def forward(self, x):
         x = F.relu(self.bn1(self.conv1(x)))
+        print(x.size())
         x = F.relu(self.bn2(self.conv2(x)))
+        print(x.size)
         x = F.relu(self.bn3(self.conv3(x)))
-        return self.head(x.view(x.size(0), -1))
+        return self.head(x.view(x.size(0), -1))  # size(0)是样本的数量，也就是说就算是多个样本最后得到的维度也是samples*（32*2*8）
 
 
 resize = T.Compose([T.ToPILImage(),
@@ -124,7 +126,7 @@ TARGET_UPDATE = 10
 init_screen = get_screen()
 _, _, screen_height, screen_width = init_screen.shape
 
-n_actions = env.action_space.shape[0]
+n_actions = 2  # env.action_space = discrete(2)
 
 policy_net = DQN(screen_height, screen_width, n_actions).to(device)
 target_net = DQN(screen_height, screen_width, n_actions).to(device)
@@ -145,12 +147,15 @@ def select_action(state):
     steps_done += 1
     if sample > eps_threshold:
         with torch.no_grad():
+            sth1 = policy_net(state).max(1)
+            sth2 = sth1[1]
+            sth = sth2.view(1, 1)
             return policy_net(state).max(1)[1].view(1, 1)
     else:
         return torch.tensor([[random.randrange(n_actions)]], device=device)
 
 
-episode_durations = []
+episode_durations = [] # 这又是干嘛的？
 
 
 def plot_durations():
@@ -163,9 +168,74 @@ def plot_durations():
     plt.plot(durations_t.numpy())
     if len(durations_t) >= 100:
         means = durations_t.unfold(0, 100, 1).mean(1).view(-1)
-        means = torch.cat((torch.zeros(99), means))
-        plt.plot(means.numpy())
+        means = torch.cat((torch.zeros(99), means))  # 这两步是做什么？
+        plt.plot(means.numpy())  # 两张图输出在一起？
     plt.pause(0.001)
     if is_ipython:
         display.clear_output(wait=True)
         display.display(plt.gcf())
+
+
+def optimize_model():
+    if len(memory) < BATCH_SIZE:
+        return
+    transitions = memory.sample((BATCH_SIZE))
+    batch = Transition(*zip(*transitions))  # 这是一个什么数据结构？
+    sth = map(lambda s: s is not None,  # 这又是个啥？
+        batch.next_state)
+    non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,  # 这又是个啥？
+                                            batch.next_state)), device=device, dtype=torch.bool)
+    non_final_next_states = torch.cat([s for s in batch.next_state
+                                       if s is not None])
+    state_batch = torch.cat(batch.state)
+    action_batch = torch.cat(batch.action)
+    reward_batch = torch.cat(batch.reward)
+
+    state_action_values = policy_net(state_batch).gather(1, action_batch)
+
+    next_state_values = torch.zeros(BATCH_SIZE, device=device)
+    next_state_values[non_final_mask] = target_net(non_final_next_states).max(1)[0].detach()  # detach不计算梯度？
+    expected_state_action_values = (next_state_values * GAMMA) + reward_batch
+
+    loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
+
+    optimizer.zero_grad()
+    loss.backward()
+    for param in policy_net.parameters():
+        param.grad.data.clamp_(-1, 1)
+    optimizer.step()
+
+
+num_episodes = 50
+for i_episode in range(num_episodes):
+    env.reset()
+    last_screen = get_screen()
+    current_screen = get_screen()
+    state = current_screen - last_screen
+    for t in count():
+        action = select_action(state)
+        _, reward, done, _, _ = env.step(action.item())
+        reward = torch.tensor([reward], device=device)
+        last_screen = current_screen
+        current_screen = get_screen()
+        if not done:
+            next_state = current_screen - last_screen
+        else:
+            next_state = None
+        memory.push(state, action, next_state, reward)
+        state = next_state
+        optimize_model()
+        if done:
+            episode_durations.append(t+1)
+            plot_durations()
+            break
+    if i_episode & TARGET_UPDATE == 0:
+        target_net.load_state_dict(policy_net.state_dict())
+
+
+print('Complete')
+env.render()
+env.close()
+plt.ioff()
+plt.show()
+

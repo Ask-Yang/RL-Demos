@@ -11,9 +11,15 @@ print(arr2.transpose((1,0)))
 # (1,0,2)第0维的下标和第1维的下标对换，第2维不变。换的是元素的位置而不是元素，倒不如说用旧元素、新位置来创建了一个新数组。
 
 input=torch.arange(0,6)
-print(input)
-print(input.shape)
-print(input.unsqueeze(0))
-print(input.unsqueeze(0).shape)
-print(input.unsqueeze(1))
-print(input.unsqueeze(1).shape)
+# print(input)
+# print(input.shape)
+# print(input.unsqueeze(0))
+# print(input.unsqueeze(0).shape)
+# print(input.unsqueeze(1))
+# print(input.unsqueeze(1).shape)
+
+arr1 = np.arange(4)
+def sq(x):
+    return x*x
+
+print(list(map(sq,arr1)))
