@@ -3,7 +3,11 @@ import os
 import random
 import time
 from distutils.util import strtobool
+
 from actor_critic_model import *
+from collector import *
+from ddpg import *
+from trainer import *
 
 import gym
 import numpy as np
@@ -122,10 +126,12 @@ def mujoco_ddpg(args=parse_args()):
     critic_target = CriticNet(envs).to(device)
     critic_target.load_state_dict(critic.state_dict())
     critic_optim = optim.Adam(list(critic.parameters()), lr=args.learning_rate)
+    policy = DDPGPolicy(actor, actor_target, actor_optim,
+                        critic, critic_target, critic_optim)
 
     envs.single_observation_space.dtype = np.float32
     # replay buffer setup
-    rb = ReplayBuffer(
+    replay_buffer = ReplayBuffer(
         args.buffer_size,
         envs.single_observation_space,
         envs.single_action_space,
@@ -134,5 +140,10 @@ def mujoco_ddpg(args=parse_args()):
     )
     start_time = time.time()
 
+    # setup game and start
+    collector = Collector(envs, args, policy, writer, replay_buffer, device)
+    collector.collect()  # fill replay_buffer
 
-
+    # traing
+    tariner = Trainer()
+    tariner.run()

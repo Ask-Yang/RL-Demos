@@ -3,10 +3,10 @@ import torch
 
 
 class Collector:
-    def __init__(self, envs, args, actor, writer, replay_buffer, device):
+    def __init__(self, envs, args, policy, writer, replay_buffer, device):
         self.envs = envs
         self.args = args
-        self.actor = actor
+        self.policy = policy
         self.writer = writer
         self.replay_buffer = replay_buffer
         self.device = device
@@ -20,8 +20,8 @@ class Collector:
                 actions = np.array([self.envs.single_action_space.sample() for _ in range(self.envs.num_envs)])
             else:
                 with torch.no_grad():
-                    actions = self.actor(torch.Tensor(obs).to(self.device))
-                    actions += torch.normal(0,  self.actor .action_scale * self.args.exploration_noise)
+                    actions = self.policy.actor(torch.Tensor(obs).to(self.device))
+                    actions += torch.normal(0, self.policy.actor.action_scale * self.args.exploration_noise)
                     actions = actions.cpu().numpy().clip(self.envs.single_action_space.low, self.envs.single_action_space.high)
 
             # TRY NOT TO MODIFY: execute the game and log data.
