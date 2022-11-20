@@ -1,0 +1,11 @@
+<?xml version="1.0">
+<robot name="simplecar">
+    <!-- Base Frame of car -->
+    <link name="base_link">
+        <visual>
+            <geometry>
+                <box size="0.5 0.3 0.1"/>
+            </geometry>
+        </visual?
+    </link>
+</robot>
