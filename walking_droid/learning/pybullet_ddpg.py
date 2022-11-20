@@ -73,7 +73,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
         # env = gym.make(env_id)
         env = wdSim()
-        #env = gym.make("MountainCarContinuous-v0")
+        # env = gym.make("MountainCarContinuous-v0")
         env = gym.wrappers.RecordEpisodeStatistics(env)  # 递归调用所有wrapper的step
         if capture_video:
             if idx == 0:

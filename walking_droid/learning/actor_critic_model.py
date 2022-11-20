@@ -27,11 +27,13 @@ class ActorNet(nn.Module):
         self.fc2 = nn.Linear(256, 256)
         self.fc_mu = nn.Linear(256, int(np.prod(env.single_action_space.shape)))
         # action rescaling
+        action_high = env.action_space.spaces[0].high
+        action_low = env.action_space.spaces[0].low
         self.register_buffer(
-            "action_scale", torch.tensor((env.action_space.high - env.action_space.low) / 2.0, dtype=torch.float32)
+            "action_scale", torch.tensor((action_high - action_low) / 2.0, dtype=torch.float32)
         )
         self.register_buffer(
-            "action_bias", torch.tensor((env.action_space.high + env.action_space.low) / 2.0, dtype=torch.float32)
+            "action_bias", torch.tensor((action_high + action_low) / 2.0, dtype=torch.float32)
         )
 
     def forward(self, x):
