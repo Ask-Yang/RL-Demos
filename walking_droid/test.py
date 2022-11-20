@@ -1,3 +1,5 @@
-import torch
+import os
+from env.sim_env import *
 
-print(torch.cuda.is_available())
+
+env = wdSim()

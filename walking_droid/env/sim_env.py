@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 import motor
 import matplotlib.pyplot as plt
+import os
 
 
 class wdSim(gym.Env):  # gym实际上是一个RL的架子，模拟是在pybullet中模拟，然后在二者之间转化observation and action
@@ -40,7 +41,7 @@ class wdSim(gym.Env):  # gym实际上是一个RL的架子，模拟是在pybullet
         )
         # 连接引擎
         self.physics_client_id = p.connect(p.GUI)
-        p.setAdditionalSearchPath(pybullet_data.getDataPath())
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())  # 用到pybullet资源时要加这个
         # 起点
         self.start_point = 0.27
         # 计数器
@@ -70,9 +71,9 @@ class wdSim(gym.Env):  # gym实际上是一个RL的架子，模拟是在pybullet
         p.resetSimulation(physicsClientId=self.physics_client_id)
         p.setGravity(0, 0, -9.8)
         cubeStartOrientation = p.getQuaternionFromEuler([1.57, 0, 0])
-        self.plane = p.loadURDF("plane.urdf", physicsClientId=self.physics_client_id)
-        self.robot = p.loadURDF("walkingDroid/walkingDroid.urdf", [0., 0, 0.23], cubeStartOrientation,
-                                physicsClientId=self.physics_client_id)
+        self.plane = p.loadURDF("plane.urdf", physicsClientId=self.physics_client_id)  # 之前加了pybullet.data的绝对路径，所以这里可以直接用相对路径
+        self.robot = p.loadURDF("data/walkingDroid/walkingDroid.urdf", [0., 0, 0.23], cubeStartOrientation,
+                                physicsClientId=self.physics_client_id)  # python的相对路径就是当前项目下，所以这里不用改
 
         return self.__get_observation()
 
