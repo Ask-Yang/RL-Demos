@@ -31,10 +31,10 @@ class ActorNet(nn.Module):
         action_low = env.action_space.spaces[0].low
         self.register_buffer(
             "action_scale", torch.tensor((action_high - action_low) / 2.0, dtype=torch.float32)
-        )
+        )  # 需要除2吗？如果action space不对称呢？应该是和下面对应，分成”原点“两边
         self.register_buffer(
             "action_bias", torch.tensor((action_high + action_low) / 2.0, dtype=torch.float32)
-        )
+        )  # action space的“原点”
 
     def forward(self, x):
         x = F.relu(self.fc1(x))

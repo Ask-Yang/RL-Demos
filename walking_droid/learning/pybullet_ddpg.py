@@ -1,6 +1,7 @@
 import argparse
 import os
 import random
+import sys
 import time
 from distutils.util import strtobool
 
@@ -34,10 +35,6 @@ def parse_args():
         help="if toggled, cuda will be enabled by default")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="if toggled, this experiment will be tracked with Weights and Biases")
-    parser.add_argument("--wandb-project-name", type=str, default="cleanRL",
-        help="the wandb's project name")
-    parser.add_argument("--wandb-entity", type=str, default=None,
-        help="the entity (team) of wandb's project")
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="whether to capture videos of the agent performances (check out `videos` folder)")
 
@@ -64,6 +61,7 @@ def parse_args():
         help="the frequency of training policy (delayed)")
     parser.add_argument("--noise-clip", type=float, default=0.5,
         help="noise clip parameter of the Target Policy Smoothing Regularization")
+    parser.add_argument("--num-envs", type=int, default=1)
     args = parser.parse_args()
     # fmt: on
     return args
@@ -77,7 +75,10 @@ def make_env(env_id, seed, idx, capture_video, run_name):
         env = gym.wrappers.RecordEpisodeStatistics(env)  # 递归调用所有wrapper的step
         if capture_video:
             if idx == 0:
-                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", step_trigger=lambda t: t % 10 == 0)
+                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}",
+                                               step_trigger=lambda t: t % 10000 == 0
+                                                                      or t % 10050 == 0
+                                                                      or t % 10100 == 0)
         env.seed(seed)
         env.action_space.seed(seed)
         env.observation_space.seed(seed)
@@ -90,18 +91,7 @@ def mujoco_ddpg():
     args = parse_args()
     args.env_id = "droid"
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-    if args.track:
-        import wandb
 
-        wandb.init(
-            project=args.wandb_project_name,
-            entity=args.wandb_entity,
-            sync_tensorboard=True,
-            config=vars(args),
-            name=run_name,
-            monitor_gym=True,
-            save_code=True,
-        )
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
@@ -114,11 +104,10 @@ def mujoco_ddpg():
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
-    p=torch.cuda.is_available()
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
+    envs = gym.vector.AsyncVectorEnv([make_env(args.env_id, args.seed + i, i, args.capture_video, run_name) for i in range(args.num_envs)])
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
     # model setup
@@ -146,14 +135,18 @@ def mujoco_ddpg():
 
     # setup game and start
     obs = envs.reset()
-    for global_step in range(args.total_timesteps):
+    learning_starts = args.total_timesteps // 40
+    global_max_return = sys.float_info.min
+    global_step = 0
+    while global_step < args.total_timesteps:
         # ALGO LOGIC: put action logic here
-        if global_step < args.learning_starts:
+        if global_step < learning_starts:  # collect rollout, starts defalut 25000
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            # actions 对应的是 envs。单个action也是一个数组，表示机器人的各个运动
         else:
             with torch.no_grad():
                 actions = actor(torch.Tensor(obs).to(device))
-                actions += torch.normal(0, actor.action_scale * args.exploration_noise)
+                actions += torch.normal(0, actor.action_scale * args.exploration_noise)  # noise default 0.1
                 actions = actions.cpu().numpy().clip(envs.single_action_space.low, envs.single_action_space.high)
 
         # TRY NOT TO MODIFY: execute the game and log data.
@@ -166,21 +159,30 @@ def mujoco_ddpg():
                 print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                 writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+                if info['episode']['r'] > global_max_return:
+                    global_max_return = info['episode']['r']
+                    torch.save({
+                        'actor': actor.state_dict(),
+                        'actor_target': actor_target.state_dict(),
+                        'critic': critic.state_dict(),
+                        'critic_target': critic_target.state_dict()
+                    }, "../model/model_state_"+str(time.time()))
                 break
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `terminal_observation`
         real_next_obs = next_obs.copy()
         for idx, d in enumerate(dones):
             if d and "terminal_observation" in infos[idx]:
-                real_next_obs[idx] = infos[idx]["terminal_observation"]
-        replay_buffer.add(obs, real_next_obs, actions, rewards, dones, infos)
+                real_next_obs[idx] = infos[idx]["terminal_observation"]  # idx是第几个env的next_obs，d=True，而且这个env的状态是terminal_observation
+        for i in range(envs.num_envs):
+            replay_buffer.add(obs[i], real_next_obs[i], actions[i], rewards[i], dones[i], [infos[i]])
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
 
         # ALGO LOGIC: training.
-        if global_step > args.learning_starts:
-            data = replay_buffer.sample(args.batch_size)
+        if global_step > learning_starts:
+            data = replay_buffer.sample(args.batch_size)  # batch_size最好要比learning_starts大，但比它小也不是不可以
             with torch.no_grad():
                 next_state_actions = actor_target(data.next_observations)
                 qf1_next_target = critic_target(data.next_observations, next_state_actions)
@@ -212,6 +214,9 @@ def mujoco_ddpg():
                 writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        global_step += envs.num_envs
+
+
 
 
     # collector = Collector(envs, args, policy, writer, replay_buffer, device)

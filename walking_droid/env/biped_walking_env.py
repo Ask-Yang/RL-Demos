@@ -5,16 +5,18 @@ import numpy as np
 import pybullet as p
 import time
 from datetime import datetime
-import motor
 import matplotlib.pyplot as plt
 import os
+
+from plane import *
+from biped_robot import *
+import motor
 
 
 class wdSim(gym.Env):  # gym实际上是一个RL的架子，模拟是在pybullet中模拟，然后在二者之间转化observation and action
     # gym -> ob,action -> position, angle, velocity, acceleration -> pybullet,
     # pybullet do moving -> position, angle,,,-> ob, action -> gym
     def __init__(self):
-        self.pybullet_mode = p.DIRECT
         self.metadata = {'render.modes': ['human', 'rgb_array'], 'video.frames_per_second': 2}
         self.max_episode_steps = 50
         # 定义动作空间
@@ -34,7 +36,7 @@ class wdSim(gym.Env):  # gym实际上是一个RL的架子，模拟是在pybullet
         self.observation_space = spaces.Box(low=-high, high=high)  # 这个移动距离也太小了点
 
         # 连接引擎
-        self.client = p.connect(self.pybullet_mode)
+        self.client = p.connect(p.DIRECT)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())  # 用到pybullet资源时要加这个
         # 计数器
         self.step_num = 0
@@ -53,20 +55,19 @@ class wdSim(gym.Env):  # gym实际上是一个RL的架子，模拟是在pybullet
     def reset(self):  # 重启环境
         p.resetSimulation(physicsClientId=self.client)
         p.setGravity(0, 0, -9.8)
-        cube_start_orientation = p.getQuaternionFromEuler([1.57, 0, 0])
-        self.plane = p.loadURDF("plane.urdf", physicsClientId=self.client)   # 之前加了pybullet.data的绝对路径，所以这里可以直接用相对路径
-        self.robot = p.loadURDF("../data/walkingDroid/walkingDroid.urdf", [0., 0, 0.23], cube_start_orientation,
-                                physicsClientId=self.client)  # python的相对路径就是当前文件下，所以这里不用改
 
-        return self.__get_observation()
+        self.plane = Plane(self.client)
+        self.robot = BipedRobot(self.client)
+
+        return self.robot.get_observation()
 
     def step(self, action):  # 前进一步，在pybullet中前进，根据pybullet的结果转化为obersvation，并返回
         # self.render()
-        obs_before = self.__get_observation()
+        obs_before = self.robot.get_observation()
         location_before, _ = p.getBasePositionAndOrientation(self.robot, physicsClientId=self.client)
-        self.__apply_action(action)
+        self.robot.apply_action(action)
         self.step_num += 1
-        state = self.__get_observation()
+        state = self.robot.get_observation()
 
         base = p.getBasePositionAndOrientation(self.robot, physicsClientId=self.client)
         angle_tuple = p.getEulerFromQuaternion(base[1])  # -1.4   0.8#角度四元组转为欧拉角
@@ -177,56 +178,4 @@ class wdSim(gym.Env):  # gym实际上是一个RL的架子，模拟是在pybullet
             p.disconnect(self.client)
         self.client = -1
 
-    def __apply_action(self, action):  # 告诉pybullet如何执行gym的action
-        assert isinstance(action, list) or isinstance(action, np.ndarray)
-        r_thigh, r_shin, l_thigh, l_shin = action
-        # 根据运动时间计算动作分段数量
-        motion_part_num = motor.get_motion_part_num(self.run_time * 1000)
-        # 获取当前关节值
-        JointStates = p.getJointStates(self.robot, [0, 1, 2, 3])
-        JointStates = np.array([JointStates[0][0], JointStates[1][0], JointStates[2][0], JointStates[3][0]])
-        # 动作分段
-        motion_part_step = motor.split_motion(JointStates, np.array([r_thigh, r_shin, l_thigh, l_shin]),
-                                              motion_part_num)
-        motion_part_step_targetPositions = JointStates + motion_part_step
-
-        time_flag = 0
-
-        while 1:
-
-            if time_flag == 0:
-                a = datetime.now()  # 获得当前时间
-                b = datetime.now()  # 获取当前时间
-                time_flag = 1
-                # print(flag)
-            if (b - a).microseconds / 1000 < 12:
-
-                p.setJointMotorControlArray(
-                    bodyUniqueId=self.robot,
-                    jointIndices=[0, 1, 2, 3],
-                    controlMode=p.POSITION_CONTROL,
-                    targetPositions=[motion_part_step_targetPositions[0], motion_part_step_targetPositions[1],
-                                     motion_part_step_targetPositions[2], motion_part_step_targetPositions[3]]
-                )
-                p.stepSimulation()
-                b = datetime.now()  # 获取当前时间
-
-            else:
-                motion_part_num = motion_part_num - 1
-                time_flag = 0
-                if motion_part_num == 0:
-                    break
-                else:
-                    motion_part_step_targetPositions = motion_part_step_targetPositions + motion_part_step
-
-
-    def __get_observation(self):  # 告诉Env如何从pybullet中获得oberservation
-        if not hasattr(self, "robot"):
-            assert Exception("robot hasn't been loaded in!")
-        # 获取关节值
-        JointStates = p.getJointStates(self.robot, [0, 1, 2, 3], physicsClientId=self.client)
-        obs = [JointStates[0][0], JointStates[1][0], JointStates[2][0], JointStates[3][0]]
-
-        # return np.array([distance, angle])
-        return np.around(np.asarray(obs), 2)
 
