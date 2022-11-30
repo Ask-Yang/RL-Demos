@@ -13,8 +13,11 @@ import os
 class wdSim(gym.Env):  # gym实际上是一个RL的架子，模拟是在pybullet中模拟，然后在二者之间转化observation and action
     # gym -> ob,action -> position, angle, velocity, acceleration -> pybullet,
     # pybullet do moving -> position, angle,,,-> ob, action -> gym
-    def __init__(self):
-        self.pybullet_mode = p.DIRECT
+    def __init__(self, mode="DIRECT"):
+        if mode == "DIRECT":
+            self.pybullet_mode = p.DIRECT
+        else:
+            self.pybullet_mode = p.GUI
         self.metadata = {'render.modes': ['human', 'rgb_array'], 'video.frames_per_second': 2}
         self.max_episode_steps = 50
         # 定义动作空间

@@ -1,9 +1,8 @@
 import argparse
-import os
 import random
 import sys
-import time
 from distutils.util import strtobool
+import os
 
 from actor_critic_model import *
 from collector import *
@@ -15,7 +14,6 @@ import gym
 import numpy as np
 import pybullet_envs  # noqa
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from stable_baselines3.common.buffers import ReplayBuffer
@@ -67,18 +65,20 @@ def parse_args():
     return args
 
 
-def make_env(env_id, seed, idx, capture_video, run_name):
+def make_env(env_id, seed, idx, capture_video, run_name, pybullet_mode):
     def thunk():
         # env = gym.make(env_id)
-        env = wdSim()
+        env = wdSim(pybullet_mode)
         # env = gym.make("MountainCarContinuous-v0")
         env = gym.wrappers.RecordEpisodeStatistics(env)  # 递归调用所有wrapper的step
         if capture_video:
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}",
-                                               step_trigger=lambda t: t % 10000 == 0
-                                                                      or t % 10050 == 0
-                                                                      or t % 10100 == 0)
+                                               step_trigger=lambda t: t % 100 == 0
+                                                                      or t % 100 == 30
+                                                                      or t % 100 == 60)
+                # 并行运行的时候录制的video会少一些，因为wrapper的global_step是内有的，数量为1/num_envs*global_step，
+                # 也就是并行的环境生成的video名字相同会覆盖之前生成的，但迭代的video仍覆盖全部global_step区间
         env.seed(seed)
         env.action_space.seed(seed)
         env.observation_space.seed(seed)
@@ -87,10 +87,13 @@ def make_env(env_id, seed, idx, capture_video, run_name):
     return thunk
 
 
+def get_time():
+    return datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+
 def mujoco_ddpg():
     args = parse_args()
     args.env_id = "droid"
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{get_time()}"
 
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
@@ -107,7 +110,8 @@ def mujoco_ddpg():
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.AsyncVectorEnv([make_env(args.env_id, args.seed + i, i, args.capture_video, run_name) for i in range(args.num_envs)])
+    envs = gym.vector.AsyncVectorEnv([make_env(args.env_id, args.seed + i, i, args.capture_video, run_name, "DIRECT")
+                                      for i in range(args.num_envs)])
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
     # model setup
@@ -138,6 +142,9 @@ def mujoco_ddpg():
     learning_starts = args.total_timesteps // 40
     global_max_return = sys.float_info.min
     global_step = 0
+    # model_save_num = 0
+    model_save_path = "models/models_" + get_time()
+    os.makedirs(model_save_path)
     while global_step < args.total_timesteps:
         # ALGO LOGIC: put action logic here
         if global_step < learning_starts:  # collect rollout, starts defalut 25000
@@ -159,14 +166,17 @@ def mujoco_ddpg():
                 print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                 writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
-                if info['episode']['r'] > global_max_return:
+                if info['episode']['r'] > global_max_return:  # and global_step / args.total_timesteps * 10 > model_save_num:
+                    # model_save_num = (model_save_num + 1) % 10  # 保存每10%step的model，与最优的model
                     global_max_return = info['episode']['r']
                     torch.save({
                         'actor': actor.state_dict(),
                         'actor_target': actor_target.state_dict(),
                         'critic': critic.state_dict(),
-                        'critic_target': critic_target.state_dict()
-                    }, "../model/model_state_"+str(time.time()))
+                        'critic_target': critic_target.state_dict(),
+                        'actor_optim': actor_optim.state_dict(),
+                        'critic_optim': critic_optim.state_dict()
+                    }, model_save_path+"/checkpoint_"+get_time())
                 break
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `terminal_observation`
@@ -215,16 +225,6 @@ def mujoco_ddpg():
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
         global_step += envs.num_envs
-
-
-
-
-    # collector = Collector(envs, args, policy, writer, replay_buffer, device)
-    # collector.collect()  # fill replay_buffer
-    #
-    # # traing
-    # tariner = Trainer(policy, envs, device)
-    # tariner.run(replay_buffer, args, writer)
 
     envs.close()
     writer.close()
